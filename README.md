@@ -155,7 +155,7 @@ This project is licensed under the [MIT License](https://opensource.org/licenses
 
 ## 🙌 Contributions
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/mruniquehacker/Knightbot-MD/issues).
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/issues).
 
 ---
 
@@ -192,7 +192,7 @@ This project is licensed under the MIT License. However, you must:
 
 ## 📜 Copyright Notice
 
-Copyright (c) 2025 ANONYMOUS. All rights reserved.
+Copyright (c) 2026 CHRIS-TECH. All rights reserved.
 
 This project contains code from various open source projects:
 - Baileys (MIT License)

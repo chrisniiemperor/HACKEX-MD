@@ -10,7 +10,7 @@ This is a WhatsApp bot built using the Baileys library for group management, inc
 </div> 
 
 <div align="center"> 
-  <a href="https://youtube.com/@mr_unique_hacker"> 
+  <a href="https://youtube.com/"> 
     <img src="https://github.com/chrisniiemperor/HACKEX-MD/blob/main/assets/bot_image.jpg" alt="Knight Bot" height="300"> 
   </a> 
 </div>
@@ -42,7 +42,7 @@ Deploy the bot and easily connect it to your WhatsApp account by pair code. Clic
 </div>
 
 <div align="center">
-  <a href="https://knight-bot-paircode.onrender.com" target="_blank">
+  <a href="https://hackex-pair-code--chrisniiemperor.replit.app" target="_blank">
     <img src="https://img.shields.io/badge/GET%20PAIR%20CODE-Easy%20Method-ff4d4d?style=for-the-badge" alt="Generate Pair Code"/>
   </a>
 </div>

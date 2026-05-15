@@ -1,139 +1,120 @@
-const fs = require('fs');
-const path = require('path');
+require("dotenv").config();
+const OpenAI = require("openai");
 
-const USER_GROUP_DATA = path.join(__dirname, '../data/userGroupData.json');
+// =====================
+// OPENROUTER SETUP
+// =====================
+const client = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
 
-const chatMemory = {
-    messages: new Map(),
-    userInfo: new Map()
-};
+// =====================
+// MEMORY + STATE
+// =====================
+const memory = new Map(); // user chat memory
+const enabledChats = new Set(); // chatbot ON/OFF per group
 
-// load data
-function loadUserGroupData() {
-    try {
-        return JSON.parse(fs.readFileSync(USER_GROUP_DATA));
-    } catch (e) {
-        return { chatbot: {} };
-    }
-}
-
-// save data
-function saveUserGroupData(data) {
-    fs.writeFileSync(USER_GROUP_DATA, JSON.stringify(data, null, 2));
-}
-
-// typing
-async function showTyping(sock, chatId) {
-    try {
-        await sock.presenceSubscribe(chatId);
-        await sock.sendPresenceUpdate('composing', chatId);
-        await new Promise(r => setTimeout(r, 900));
-    } catch {}
-}
-
-// chatbot ON/OFF
-async function handleChatbotCommand(sock, chatId, message, match) {
-    const data = loadUserGroupData();
-
-    const senderId = message.key.participant || message.key.remoteJid;
-    const isOwner = message.key.fromMe;
-
-    if (!match) {
-        return sock.sendMessage(chatId, { text: ".chatbot on/off" }, { quoted: message });
+// =====================
+// AI FUNCTION
+// =====================
+async function askAI(userId, message) {
+  try {
+    if (!memory.has(userId)) {
+      memory.set(userId, []);
     }
 
-    if (!isOwner) {
-        return sock.sendMessage(chatId, { text: "❌ Only owner can use this" }, { quoted: message });
-    }
+    const history = memory.get(userId);
 
-    if (match === "on") {
-        data.chatbot[chatId] = true;
-        saveUserGroupData(data);
-        return sock.sendMessage(chatId, { text: "✅ Gemini AI Chatbot Enabled" });
-    }
+    history.push({ role: "user", content: message });
 
-    if (match === "off") {
-        delete data.chatbot[chatId];
-        saveUserGroupData(data);
-        return sock.sendMessage(chatId, { text: "❌ Chatbot Disabled" });
-    }
-}
-
-// 🤖 GEMINI AI REQUEST (FIXED + STABLE)
-async function getAIResponse(message) {
-    try {
-        const API_KEY = process.env.GEMINI_API_KEY;
-
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
-
-        const payload = {
-            contents: [
-                {
-                    parts: [
-                        {
-                            text: `You are a helpful WhatsApp assistant. Reply short and natural.\nUser: ${message}`
-                        }
-                    ]
-                }
-            ]
-        };
-
-        const res = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payload)
-        });
-
-        const data = await res.json();
-
-        console.log("GEMINI RAW:", JSON.stringify(data));
-
-        const reply =
-            data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (!reply) return "🤔 I couldn't understand that.";
-
-        return reply;
-
-    } catch (err) {
-        console.log("GEMINI ERROR:", err.message);
-        return "⚠️ AI temporarily unavailable";
-    }
-}
-
-// 🤖 MAIN CHATBOT (REPLIES TO ALL MESSAGES WHEN ENABLED)
-async function handleChatbotResponse(sock, chatId, message, userMessage, senderId) {
-    const data = loadUserGroupData();
-
-    if (!data.chatbot[chatId]) return;
-
-    if (!userMessage) return;
-
-    // memory init
-    if (!chatMemory.messages.has(senderId)) {
-        chatMemory.messages.set(senderId, []);
-        chatMemory.userInfo.set(senderId, {});
-    }
-
-    const history = chatMemory.messages.get(senderId);
-
-    history.push(userMessage);
     if (history.length > 10) history.shift();
 
-    chatMemory.messages.set(senderId, history);
+    const res = await client.chat.completions.create({
+      model: "openai/gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful WhatsApp assistant. Reply short, natural, and friendly."
+        },
+        ...history
+      ]
+    });
 
-    await showTyping(sock, chatId);
+    const reply = res.choices?.[0]?.message?.content;
 
-    const reply = await getAIResponse(userMessage);
+    if (reply) {
+      history.push({ role: "assistant", content: reply });
+    }
 
-    await sock.sendMessage(chatId, {
-        text: reply
-    }, { quoted: message });
+    return reply || "🤔 I couldn't understand that.";
+  } catch (err) {
+    console.log("OpenRouter Error:", err.message);
+    return "⚠️ AI temporarily unavailable";
+  }
 }
 
+// =====================
+// TOGGLE CHATBOT
+// =====================
+async function handleChatbotCommand(sock, chatId, message, args) {
+  const sender = message.key.participant || message.key.remoteJid;
+  const isOwner = message.key.fromMe;
+
+  if (!args) {
+    return sock.sendMessage(chatId, {
+      text: ".chatbot on/off"
+    }, { quoted: message });
+  }
+
+  if (!isOwner) {
+    return sock.sendMessage(chatId, {
+      text: "❌ Only owner can control chatbot"
+    }, { quoted: message });
+  }
+
+  if (args === "on") {
+    enabledChats.add(chatId);
+    return sock.sendMessage(chatId, {
+      text: "✅ OpenRouter AI Chatbot ENABLED"
+    }, { quoted: message });
+  }
+
+  if (args === "off") {
+    enabledChats.delete(chatId);
+    return sock.sendMessage(chatId, {
+      text: "❌ OpenRouter AI Chatbot DISABLED"
+    }, { quoted: message });
+  }
+}
+
+// =====================
+// MAIN AUTO RESPONSE
+// =====================
+async function handleChatbotResponse(sock, chatId, message, text, senderId) {
+  try {
+    if (!enabledChats.has(chatId)) return;
+    if (!text) return;
+
+    // typing indicator
+    await sock.sendPresenceUpdate("composing", chatId);
+
+    const reply = await askAI(senderId, text);
+
+    await sock.sendMessage(chatId, {
+      text: reply
+    }, { quoted: message });
+
+  } catch (err) {
+    console.log("Chatbot Error:", err.message);
+  }
+}
+
+// =====================
+// EXPORTS
+// =====================
 module.exports = {
-    handleChatbotCommand,
-    handleChatbotResponse
+  handleChatbotCommand,
+  handleChatbotResponse
 };

@@ -8,7 +8,7 @@ const GROUP_FILE = "./userGroupData.json";
 
 function loadData() {
     try {
-        return JSON.parse(fs.readFileSync(GROUP_FILE));
+        return JSON.parse(fs.readFileSync(GROUP_FILE, "utf8"));
     } catch {
         return { chatbot: {} };
     }
@@ -19,18 +19,18 @@ function saveData(data) {
 }
 
 // =========================
-// CLEAN JID
+// UTIL: GET NUMBER
 // =========================
 function getNumber(jid = "") {
     return jid.split("@")[0].split(":")[0];
 }
 
 // =========================
-// AI ENGINE (AI ONLY PRO)
+// FREE AI ENGINE (MULTI API)
 // =========================
 async function getAIResponse(text) {
 
-    // 1. PRIMARY AI
+    // 🔥 1. AFFILIATEPLUS (FAST)
     try {
         const res = await fetch(
             "https://api.affiliateplus.xyz/api/chatbot?message=" +
@@ -44,7 +44,7 @@ async function getAIResponse(text) {
 
     } catch (e) {}
 
-    // 2. SECOND AI
+    // 🔥 2. MONKEDEV (STABLE FREE AI)
     try {
         const res2 = await fetch(
             "https://api.monkedev.com/fun/chat?msg=" +
@@ -57,24 +57,17 @@ async function getAIResponse(text) {
 
     } catch (e) {}
 
-    // 3. HF (OPTIONAL)
+    // 🔥 3. DIALOGPT FREE (HF PUBLIC MODEL - NO KEY)
     try {
         const res3 = await fetch(
-            "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-3B-Instruct",
+            "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium",
             {
                 method: "POST",
                 headers: {
-                    "Content-Type": "application/json",
-                    ...(process.env.HF_API_KEY && {
-                        Authorization: `Bearer ${process.env.HF_API_KEY}`
-                    })
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
-                    inputs: text,
-                    parameters: {
-                        max_new_tokens: 80,
-                        temperature: 0.8
-                    }
+                    inputs: text
                 })
             }
         );
@@ -89,12 +82,12 @@ async function getAIResponse(text) {
 
     } catch (e) {}
 
-    // ❌ AI ONLY RULE
+    // ❌ AI ONLY RULE: silent fail
     return null;
 }
 
 // =========================
-// CHATBOT COMMAND
+// CHATBOT COMMAND (.chatbot on/off)
 // =========================
 async function handleChatbotCommand(sock, chatId, msg, match) {
 
@@ -103,9 +96,12 @@ async function handleChatbotCommand(sock, chatId, msg, match) {
     const sender =
         msg.key.participant || msg.key.remoteJid;
 
-    const ownerNumber = "233XXXXXXXXX"; // CHANGE THIS
+    const senderNumber = getNumber(sender);
 
-    if (getNumber(sender) !== ownerNumber) {
+    const OWNER_NUMBER = "233XXXXXXXXX"; // 🔴 CHANGE THIS
+
+    // OWNER CHECK (FIXED SIMPLE STYLE)
+    if (senderNumber !== OWNER_NUMBER) {
         return sock.sendMessage(chatId, {
             text: "❌ Only owner can control bot",
             quoted: msg
@@ -153,16 +149,17 @@ async function handleChatbotResponse(sock, chatId, msg, text) {
     const botNumber = sock.user.id.split(":")[0];
 
     const isMentioned = text.includes(botNumber);
-    const isReply = msg.message?.extendedTextMessage?.contextInfo?.participant;
+    const isReply =
+        msg.message?.extendedTextMessage?.contextInfo?.participant;
 
-    // ONLY RESPOND IF DIRECTED
+    // ONLY REPLY WHEN DIRECTED
     if (!isMentioned && !isReply) return;
 
     const cleanText = text.replace(`@${botNumber}`, "").trim();
 
     const reply = await getAIResponse(cleanText);
 
-    // ❌ AI ONLY RULE (silent fail)
+    // ❌ AI ONLY MODE
     if (!reply) return;
 
     await sock.sendMessage(chatId, {

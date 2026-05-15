@@ -4,36 +4,41 @@ const fetch = require('node-fetch');
 
 const USER_GROUP_DATA = path.join(__dirname, '../data/userGroupData.json');
 
-// memory
+// MEMORY
 const chatMemory = {
     messages: new Map(),
     userInfo: new Map()
 };
 
-// load data
+// =====================
+// LOAD / SAVE DATA
+// =====================
 function loadUserGroupData() {
     try {
         return JSON.parse(fs.readFileSync(USER_GROUP_DATA));
     } catch (e) {
-        return { groups: [], chatbot: {} };
+        return { chatbot: {} };
     }
 }
 
-// save data
 function saveUserGroupData(data) {
     fs.writeFileSync(USER_GROUP_DATA, JSON.stringify(data, null, 2));
 }
 
-// typing
+// =====================
+// TYPING
+// =====================
 async function showTyping(sock, chatId) {
     try {
         await sock.presenceSubscribe(chatId);
         await sock.sendPresenceUpdate('composing', chatId);
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1200));
     } catch {}
 }
 
-// extract info
+// =====================
+// USER INFO EXTRACTION
+// =====================
 function extractUserInfo(msg) {
     const info = {};
 
@@ -52,18 +57,20 @@ function extractUserInfo(msg) {
     return info;
 }
 
-// chatbot ON/OFF
+// =====================
+// CHATBOT ON/OFF
+// =====================
 async function handleChatbotCommand(sock, chatId, message, match) {
     const data = loadUserGroupData();
 
     const senderId = message.key.participant || message.key.remoteJid;
     const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
 
-    const isOwner = message.key.fromMe || senderId === botNumber;
+    const isOwner = message.key.fromMe || senderId.includes(botNumber.split('@')[0]);
 
     if (!match) {
         return sock.sendMessage(chatId, {
-            text: `.chatbot on/off`
+            text: `.chatbot on / off`
         }, { quoted: message });
     }
 
@@ -86,17 +93,21 @@ async function handleChatbotCommand(sock, chatId, message, match) {
     }
 }
 
-// AI RESPONSE (FIXED + WORKING)
+// =====================
+// AI RESPONSE (FIXED + STABLE)
+// =====================
 async function getAIResponse(userMessage, userContext) {
     try {
         const prompt = `
 You are a friendly WhatsApp chatbot.
 
-Keep replies short (1–2 lines).
-Be natural, casual, human-like.
+Rules:
+- Reply in 1–2 short lines
+- Be natural and human-like
+- Do NOT be robotic
 
 User: ${userMessage}
-Context: ${JSON.stringify(userContext.userInfo)}
+User info: ${JSON.stringify(userContext.userInfo)}
 
 Reply:
         `.trim();
@@ -105,35 +116,48 @@ Reply:
             "https://api.simsimi.vn/v2/simtalk",
             {
                 method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `text=${encodeURIComponent(userMessage)}&lc=en`
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded"
+                },
+                body: `text=${encodeURIComponent(prompt)}&lc=en`
             }
         );
 
         const data = await res.json();
-        return data.message || "Hmm 🤔";
+
+        return data?.message || "🤔 I don't know what to say";
     } catch (e) {
-        return null;
+        return "⚠️ AI error, try again";
     }
 }
 
-// MAIN CHATBOT RESPONSE
+// =====================
+// MAIN AI HANDLER
+// =====================
 async function handleChatbotResponse(sock, chatId, message, userMessage, senderId) {
     const data = loadUserGroupData();
-    if (!data.chatbot[chatId]) return;
+
+    if (!data.chatbot?.[chatId]) return;
 
     const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
 
+    const text = userMessage.toLowerCase();
+
     // FIXED TRIGGER SYSTEM
+    const mentioned =
+        message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
+
+    const keywords = ["bot", "ai", "knight"];
+
     const shouldTrigger =
-        message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber) ||
-        userMessage.toLowerCase().includes("bot") ||
-        userMessage.toLowerCase().includes("ai");
+        mentioned ||
+        keywords.some(k => text.includes(k));
 
     if (!shouldTrigger) return;
 
-    let cleanedMessage = userMessage.replace(/@?\d+/g, "").trim();
+    let cleanedMessage = userMessage.replace(/@\d+/g, "").trim();
 
+    // INIT MEMORY SAFELY
     if (!chatMemory.messages.has(senderId)) {
         chatMemory.messages.set(senderId, []);
         chatMemory.userInfo.set(senderId, {});
@@ -146,8 +170,10 @@ async function handleChatbotResponse(sock, chatId, message, userMessage, senderI
         ...info
     });
 
-    const history = chatMemory.messages.get(senderId);
+    const history = chatMemory.messages.get(senderId) || [];
+
     history.push(cleanedMessage);
+
     if (history.length > 10) history.shift();
 
     chatMemory.messages.set(senderId, history);

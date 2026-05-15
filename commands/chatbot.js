@@ -428,4 +428,4 @@ You:
 
 module.exports = {
     handleChatbotCommand,
-    handleChatbotResponse
+    handleChatbotResponse}

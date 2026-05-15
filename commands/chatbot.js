@@ -1,21 +1,28 @@
-const fs = require('fs');
-const path = require('path');
-const fetch = require('node-fetch');
+const fs = require("fs");
+const path = require("path");
+const OpenAI = require("openai");
 
-const USER_GROUP_DATA = path.join(__dirname, '../data/userGroupData.json');
+require("dotenv").config();
 
-// MEMORY STORAGE
+const USER_GROUP_DATA = path.join(__dirname, "../data/userGroupData.json");
+
+// 🧠 MEMORY
 const chatMemory = {
     messages: new Map(),
     userInfo: new Map()
 };
+
+// 🔑 OPENAI INIT
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+});
 
 // LOAD DATA
 function loadUserGroupData() {
     try {
         return JSON.parse(fs.readFileSync(USER_GROUP_DATA));
     } catch (e) {
-        return { groups: [], chatbot: {} };
+        return { chatbot: {} };
     }
 }
 
@@ -24,54 +31,28 @@ function saveUserGroupData(data) {
     fs.writeFileSync(USER_GROUP_DATA, JSON.stringify(data, null, 2));
 }
 
-// TYPING INDICATOR
+// TYPING
 async function showTyping(sock, chatId) {
     try {
         await sock.presenceSubscribe(chatId);
-        await sock.sendPresenceUpdate('composing', chatId);
+        await sock.sendPresenceUpdate("composing", chatId);
         await new Promise(r => setTimeout(r, 1200));
     } catch {}
 }
 
-// EXTRACT SIMPLE USER INFO
-function extractUserInfo(msg) {
-    const info = {};
-
-    if (msg.toLowerCase().includes("my name is")) {
-        info.name = msg.split("my name is")[1]?.trim()?.split(" ")[0];
-    }
-
-    if (msg.toLowerCase().includes("years old")) {
-        info.age = msg.match(/\d+/)?.[0];
-    }
-
-    if (
-        msg.toLowerCase().includes("i live in") ||
-        msg.toLowerCase().includes("i am from")
-    ) {
-        info.location = msg.split(/i live in|i am from/i)[1]?.trim()?.split(/[.,!?]/)[0];
-    }
-
-    return info;
-}
-
-// ENABLE / DISABLE CHATBOT
+// CHATBOT ON/OFF
 async function handleChatbotCommand(sock, chatId, message, match) {
     const data = loadUserGroupData();
 
     const senderId = message.key.participant || message.key.remoteJid;
 
-    const botNumber =
-        sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-
-    const isOwner =
-        message.key.fromMe || senderId === botNumber;
-
     if (!match) {
         return sock.sendMessage(chatId, {
-            text: `.chatbot on/off`
+            text: ".chatbot on/off"
         }, { quoted: message });
     }
+
+    const isOwner = message.key.fromMe;
 
     if (!isOwner) {
         return sock.sendMessage(chatId, {
@@ -84,7 +65,7 @@ async function handleChatbotCommand(sock, chatId, message, match) {
         saveUserGroupData(data);
 
         return sock.sendMessage(chatId, {
-            text: "✅ Chatbot enabled (replies to all messages)"
+            text: "✅ ChatGPT Bot enabled"
         });
     }
 
@@ -93,28 +74,42 @@ async function handleChatbotCommand(sock, chatId, message, match) {
         saveUserGroupData(data);
 
         return sock.sendMessage(chatId, {
-            text: "❌ Chatbot disabled"
+            text: "❌ ChatGPT Bot disabled"
         });
     }
 }
 
-// AI RESPONSE (SIMSIMI)
-async function getAIResponse(userMessage) {
+// 🧠 OPENAI FUNCTION (CHATGPT)
+async function getAIResponse(userMessage, userContext) {
     try {
-        const res = await fetch("https://api.simsimi.vn/v2/simtalk", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            body: `text=${encodeURIComponent(userMessage)}&lc=en`
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                {
+                    role: "system",
+                    content: `
+You are a WhatsApp assistant.
+- Be short (1–3 lines max)
+- Be friendly and natural
+- Avoid long explanations unless asked
+                    `
+                },
+                {
+                    role: "user",
+                    content: `
+Message: ${userMessage}
+User info: ${JSON.stringify(userContext.userInfo || {})}
+                    `
+                }
+            ],
+            temperature: 0.8
         });
 
-        const data = await res.json();
-
-        return data?.message || data?.success || "🤔 I don't understand that.";
-    } catch (e) {
-        console.log("AI ERROR:", e.message);
-        return "⚠️ AI error occurred";
+        return response.choices?.[0]?.message?.content?.trim()
+            || "I'm not sure how to respond.";
+    } catch (error) {
+        console.log("OpenAI Error:", error.message);
+        return "⚠️ AI temporarily unavailable";
     }
 }
 
@@ -122,12 +117,12 @@ async function getAIResponse(userMessage) {
 async function handleChatbotResponse(sock, chatId, message, userMessage, senderId) {
     const data = loadUserGroupData();
 
-    // must be enabled for this chat
+    // check enabled
     if (!data.chatbot[chatId]) return;
 
     if (!userMessage || !userMessage.trim()) return;
 
-    const cleanedMessage = userMessage.trim();
+    const text = userMessage.trim();
 
     // INIT MEMORY
     if (!chatMemory.messages.has(senderId)) {
@@ -135,26 +130,22 @@ async function handleChatbotResponse(sock, chatId, message, userMessage, senderI
         chatMemory.userInfo.set(senderId, {});
     }
 
-    const info = extractUserInfo(cleanedMessage);
-
-    chatMemory.userInfo.set(senderId, {
-        ...chatMemory.userInfo.get(senderId),
-        ...info
-    });
-
-    // STORE HISTORY
     const history = chatMemory.messages.get(senderId);
-    history.push(cleanedMessage);
 
+    // store last messages
+    history.push(text);
     if (history.length > 10) history.shift();
 
     chatMemory.messages.set(senderId, history);
 
-    // SHOW TYPING
+    // typing effect
     await showTyping(sock, chatId);
 
-    // GET AI RESPONSE
-    const reply = await getAIResponse(cleanedMessage);
+    // AI CALL
+    const reply = await getAIResponse(text, {
+        messages: history,
+        userInfo: chatMemory.userInfo.get(senderId)
+    });
 
     if (!reply) return;
 

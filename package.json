@@ -1,25 +1,26 @@
 {
   "name": "knightbot",
   "version": "1.0.0",
-  "description": "WhatsApp Bot",
+  "description": "WhatsApp Bot using Baileys",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "start:optimized": "node --max-old-space-size=512 --optimize-for-size --gc-interval=100 index.js",
-    "cleanup": "node cleanup.js",
-    "reset-session": "node reset-session.js",
-    "start:clean": "npm run cleanup && npm run start:optimized",
     "start:fresh": "npm run reset-session && npm start",
     "install:panel": "npm install --legacy-peer-deps",
     "install:force": "npm install --force",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "docker:build": "docker build -t docker run -e SESSION_ID=$SESSION_ID knightbot"
+
+    "docker:build": "docker build -t knightbot .",
+    "docker:run": "docker run -e SESSION_ID=$SESSION_ID knightbot"
   },
   "keywords": [
     "whatsapp-bot"
   ],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@adiwajshing/keyed-db": "^0.2.4",
     "@ffmpeg/ffmpeg": "^0.12.15",
@@ -31,7 +32,7 @@
     "chalk": "^4.1.2",
     "cheerio": "^1.0.0-rc.12",
     "cookie": "^0.5.0",
-"node-fetch": "^2.6.7",
+    "node-fetch": "^2.7.0",
     "openai": "^4.0.0",
     "dotenv": "^16.4.5",
     "events": "^3.3.0",
@@ -49,7 +50,6 @@
     "moment-timezone": "^0.5.43",
     "mumaker": "^2.0.0",
     "node-cache": "^5.1.2",
-    "node-fetch": "^2.7.0",
     "node-id3": "^0.2.3",
     "node-webpmux": "^3.1.0",
     "node-youtube-music": "^0.8.3",
@@ -76,8 +76,5 @@
   },
   "overrides": {
     "jimp": "^1.6.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }

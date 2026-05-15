@@ -93,20 +93,17 @@ async function handleChatbotCommand(sock, chatId, msg, match) {
 
     const data = loadData();
 
-    const sender =
-        msg.key.participant || msg.key.remoteJid;
+const sender =
+    msg.key.participant || msg.key.remoteJid;
 
-    const senderNumber = getNumber(sender);
+const senderNumber = getNumber(sender);
 
-    const OWNER_NUMBER = "233XXXXXXXXX"; // 🔴 CHANGE THIS
-
-    // OWNER CHECK (FIXED SIMPLE STYLE)
-    if (senderNumber !== OWNER_NUMBER) {
-        return sock.sendMessage(chatId, {
-            text: "❌ Only owner can control bot",
-            quoted: msg
-        });
-    }
+if (senderNumber !== OWNER_NUMBER) {
+    return sock.sendMessage(chatId, {
+        text: "❌ Only owner can control bot",
+        quoted: msg
+    });
+}
 
     if (!match) {
         return sock.sendMessage(chatId, {

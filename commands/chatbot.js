@@ -1,15 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const OpenAI = require('openai');
+const fetch = require('node-fetch');
 
 const USER_GROUP_DATA = path.join(__dirname, '../data/userGroupData.json');
 
-// 🔑 OpenAI setup
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
-
-// memory system
 const chatMemory = {
     messages: new Map(),
     userInfo: new Map()
@@ -34,54 +28,29 @@ async function showTyping(sock, chatId) {
     try {
         await sock.presenceSubscribe(chatId);
         await sock.sendPresenceUpdate('composing', chatId);
-        await new Promise(r => setTimeout(r, 1000));
-    } catch (e) {}
+        await new Promise(r => setTimeout(r, 1200));
+    } catch {}
 }
 
-// simple info extractor
-function extractUserInfo(msg) {
-    const info = {};
-
-    if (msg.toLowerCase().includes("my name is")) {
-        info.name = msg.split("my name is")[1]?.trim()?.split(" ")[0];
-    }
-
-    if (msg.match(/\d+\s*years?\s*old/)) {
-        info.age = msg.match(/\d+/)?.[0];
-    }
-
-    if (msg.toLowerCase().includes("i live in") || msg.toLowerCase().includes("i am from")) {
-        info.location = msg.split(/i live in|i am from/i)[1]?.trim()?.split(/[.,!?]/)[0];
-    }
-
-    return info;
-}
-
-// enable / disable chatbot
+// chatbot ON/OFF
 async function handleChatbotCommand(sock, chatId, message, match) {
     const data = loadUserGroupData();
 
     const senderId = message.key.participant || message.key.remoteJid;
-    const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-
-    const isOwner = message.key.fromMe || senderId === botNumber;
+    const isOwner = message.key.fromMe;
 
     if (!match) {
-        return sock.sendMessage(chatId, {
-            text: ".chatbot on/off"
-        }, { quoted: message });
+        return sock.sendMessage(chatId, { text: ".chatbot on/off" }, { quoted: message });
     }
 
     if (!isOwner) {
-        return sock.sendMessage(chatId, {
-            text: "❌ Only owner can use this command"
-        }, { quoted: message });
+        return sock.sendMessage(chatId, { text: "❌ Only owner can use this" }, { quoted: message });
     }
 
     if (match === "on") {
         data.chatbot[chatId] = true;
         saveUserGroupData(data);
-        return sock.sendMessage(chatId, { text: "✅ Chatbot enabled" });
+        return sock.sendMessage(chatId, { text: "✅ Chatbot enabled (FREE AI)" });
     }
 
     if (match === "off") {
@@ -91,67 +60,55 @@ async function handleChatbotCommand(sock, chatId, message, match) {
     }
 }
 
-// 🤖 OPENAI RESPONSE (FIXED + COMPATIBLE MODEL)
-async function getAIResponse(userMessage, userContext) {
+// 🤖 FREE AI RESPONSE (HUGGINGFACE)
+async function getAIResponse(message) {
     try {
-        if (!process.env.OPENAI_API_KEY) {
-            return "❌ API key not set";
+        const res = await fetch(
+            "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium",
+            {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${process.env.HF_API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    inputs: message
+                })
+            }
+        );
+
+        const data = await res.json();
+
+        // fallback handling
+        if (Array.isArray(data) && data[0]?.generated_text) {
+            return data[0].generated_text;
         }
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo", // 🔥 MOST COMPATIBLE MODEL
-            messages: [
-                {
-                    role: "system",
-                    content: `
-You are a friendly WhatsApp chatbot.
-Reply naturally in 1–2 short sentences.
-Be helpful and conversational.
-                    `
-                },
-                {
-                    role: "system",
-                    content: `User info: ${JSON.stringify(userContext.userInfo)}`
-                },
-                {
-                    role: "user",
-                    content: userMessage
-                }
-            ],
-            temperature: 0.7,
-            max_tokens: 150
-        });
+        if (data?.generated_text) {
+            return data.generated_text;
+        }
 
-        return response.choices?.[0]?.message?.content?.trim() ||
-            "I didn't understand that.";
+        return "🤔 I don't understand that.";
 
     } catch (err) {
-        console.log("OPENAI ERROR:", err.message);
+        console.log("HF ERROR:", err.message);
         return "⚠️ AI temporarily unavailable";
     }
 }
 
-// 🤖 MAIN CHATBOT (REPLIES TO EVERYTHING IF ENABLED)
+// 🤖 MAIN CHATBOT (REPLIES TO ALL MESSAGES IF ENABLED)
 async function handleChatbotResponse(sock, chatId, message, userMessage, senderId) {
     const data = loadUserGroupData();
 
     if (!data.chatbot[chatId]) return;
 
-    if (!userMessage || userMessage.trim().length === 0) return;
+    if (!userMessage) return;
 
-    // init memory
+    // memory init
     if (!chatMemory.messages.has(senderId)) {
         chatMemory.messages.set(senderId, []);
         chatMemory.userInfo.set(senderId, {});
     }
-
-    // extract info
-    const info = extractUserInfo(userMessage);
-
-    chatMemory.userInfo.set(senderId, {
-        ...chatMemory.userInfo.get(senderId),
-        ...info
-    });
 
     const history = chatMemory.messages.get(senderId);
 
@@ -162,10 +119,7 @@ async function handleChatbotResponse(sock, chatId, message, userMessage, senderI
 
     await showTyping(sock, chatId);
 
-    const reply = await getAIResponse(userMessage, {
-        messages: history,
-        userInfo: chatMemory.userInfo.get(senderId)
-    });
+    const reply = await getAIResponse(userMessage);
 
     await sock.sendMessage(chatId, {
         text: reply

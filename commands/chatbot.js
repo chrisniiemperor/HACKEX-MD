@@ -1,8 +1,7 @@
-require('dotenv').config();
 
-const fs = require('fs');
-const fetch = require('node-fetch');
-const { OpenAI } = require('openai');
+const fs = require("fs");
+const fetch = require("node-fetch");
+const { OpenAI } = require("openai");
 
 // =========================
 // GPT CLIENT
@@ -12,6 +11,13 @@ const openai = new OpenAI({
 });
 
 // =========================
+// OWNER CONFIG (IMPORTANT FIX)
+// =========================
+const OWNERS = [
+    "233XXXXXXXXX@s.whatsapp.net" // <-- CHANGE THIS TO YOUR NUMBER
+];
+
+// =========================
 // TEMP MEMORY ONLY
 // =========================
 const chatMemory = {
@@ -19,19 +25,16 @@ const chatMemory = {
 };
 
 // =========================
-// GROUP SETTINGS FILE
+// GROUP DATA
 // =========================
-const GROUP_FILE = './userGroupData.json';
+const GROUP_FILE = "./userGroupData.json";
 
-// =========================
-// LOAD / SAVE GROUP DATA
-// =========================
 function loadGroupData() {
     try {
         if (!fs.existsSync(GROUP_FILE)) {
             return { chatbot: {} };
         }
-        return JSON.parse(fs.readFileSync(GROUP_FILE, 'utf8'));
+        return JSON.parse(fs.readFileSync(GROUP_FILE, "utf8"));
     } catch {
         return { chatbot: {} };
     }
@@ -55,6 +58,14 @@ function normalize(jid = "") {
     return jid.split("@")[0].split(":")[0];
 }
 
+function getSender(msg) {
+    return (
+        msg.key.participant ||
+        msg.participant ||
+        msg.key.remoteJid
+    );
+}
+
 function sanitize(text = "") {
     return text.replace(/[{}[\]$`]/g, "").trim();
 }
@@ -64,7 +75,7 @@ function delay(ms) {
 }
 
 function typingDelay(text) {
-    const base = text.length * 45;
+    const base = text.length * 40;
     return Math.min(base + Math.random() * 2000, 6000);
 }
 
@@ -80,15 +91,15 @@ function buildPrompt(msg, history) {
     let style = "";
 
     if (botConfig.personality === "friendly") {
-        style = "Be friendly, supportive WhatsApp friend.";
+        style = "Be friendly and supportive WhatsApp friend.";
     }
 
     if (botConfig.personality === "funny") {
-        style = "Be funny, sarcastic, chill WhatsApp friend.";
+        style = "Be funny, sarcastic WhatsApp friend.";
     }
 
     if (botConfig.personality === "savage") {
-        style = "Be slightly savage but NOT abusive or offensive.";
+        style = "Be slightly savage but NOT abusive or hateful.";
     }
 
     return `
@@ -100,8 +111,8 @@ RULES:
 - 1–2 lines max
 - use emojis naturally
 - act human
-- no AI mention
 - roast only if user is rude
+- no AI mention
 
 Chat history:
 ${history}
@@ -114,14 +125,14 @@ Reply:
 }
 
 // =========================
-// HF + GPT HYBRID AI
+// AI (HF + GPT FALLBACK)
 // =========================
 async function getAIResponse(msg, history) {
 
     const prompt = buildPrompt(msg, history);
 
     // =========================
-    // 1. HUGGINGFACE (FAST)
+    // HF FIRST
     // =========================
     try {
 
@@ -162,7 +173,7 @@ async function getAIResponse(msg, history) {
     }
 
     // =========================
-    // 2. GPT FALLBACK (SMART)
+    // GPT FALLBACK
     // =========================
     try {
 
@@ -174,7 +185,7 @@ async function getAIResponse(msg, history) {
                     content:
 `You are a WhatsApp group member.
 Be short, funny, human-like.
-Light roast only if user is rude.`
+Light roast if user is rude.`
                 },
                 {
                     role: "user",
@@ -207,12 +218,12 @@ async function handleChatbotCommand(sock, chatId, msg, match) {
         });
     }
 
-    const sender =
-        msg.key.participant || msg.key.remoteJid;
+    const sender = getSender(msg);
+    const senderNumber = normalize(sender);
 
-    const botNumber = normalize(sock.user.id);
+    const isOwner = OWNERS.includes(sender);
 
-    if (normalize(sender) !== botNumber) {
+    if (!isOwner) {
         return sock.sendMessage(chatId, {
             text: "❌ Only owner can control bot",
             quoted: msg
@@ -275,9 +286,7 @@ async function handleChatbotResponse(
 
     const clean = sanitize(userMessage);
 
-    // =========================
     // TEMP MEMORY
-    // =========================
     if (!chatMemory.messages.has(senderId)) {
         chatMemory.messages.set(senderId, []);
     }
@@ -293,7 +302,7 @@ async function handleChatbotResponse(
 
     const reply = await getAIResponse(clean, history);
 
-    if (!reply) return; // silent fail
+    if (!reply) return;
 
     await delay(typingDelay(reply));
 

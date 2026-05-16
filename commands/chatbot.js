@@ -12,15 +12,14 @@ async function handleChatbotResponse(sock, chatId, message, userMessage, senderI
         });
 
         if (!response) {
-            await sock.sendMessage(chatId, { 
-                text: "Hmm, let me think about that... 🤔\nI'm having trouble processing your request right now.",
+            await sock.sendMessage(chatId, {
+                text: "Hmm 🤔 I couldn't process that right now. Try again.",
                 quoted: message
             });
             return;
         }
 
-        // human delay
-        await new Promise(resolve => setTimeout(resolve, getRandomDelay()));
+        await new Promise(r => setTimeout(r, getRandomDelay()));
 
         await sock.sendMessage(chatId, {
             text: response
@@ -29,13 +28,11 @@ async function handleChatbotResponse(sock, chatId, message, userMessage, senderI
         });
 
     } catch (error) {
-        console.error("❌ Error in chatbot response:", error.message);
-
-        if (error.message?.includes("No sessions")) return;
+        console.error("❌ Chatbot handler error:", error.message);
 
         try {
             await sock.sendMessage(chatId, {
-                text: "Oops! 😅 I got confused. Try again?",
+                text: "⚠️ AI temporarily unavailable. Try again later.",
                 quoted: message
             });
         } catch (e) {
@@ -46,18 +43,18 @@ async function handleChatbotResponse(sock, chatId, message, userMessage, senderI
 
 
 /**
- * OPENROUTER AI FUNCTION (REPLACEMENT)
+ * OPENROUTER AI FUNCTION (FIXED)
  */
 async function getAIResponse(userMessage, userContext) {
     try {
-        const prompt = `
-You are Knight Bot. A natural WhatsApp conversational assistant.
+        if (!process.env.OPENROUTER_API_KEY) {
+            console.error("❌ Missing OPENROUTER_API_KEY");
+            return null;
+        }
 
-RULES:
-- Short replies (1–2 lines)
-- Natural human tone
-- No explanations of rules
-- Be casual and friendly
+        const prompt = `
+You are Knight Bot.
+Reply naturally in 1–2 short lines.
 
 Chat history:
 ${userContext.messages.join("\n")}
@@ -66,7 +63,6 @@ User info:
 ${JSON.stringify(userContext.userInfo)}
 
 User: ${userMessage}
-Reply naturally:
         `.trim();
 
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -80,32 +76,46 @@ Reply naturally:
             body: JSON.stringify({
                 model: "meta-llama/llama-3.1-8b-instruct:free",
                 messages: [
-                    { role: "system", content: "You are a helpful WhatsApp chatbot." },
                     { role: "user", content: prompt }
                 ],
-                temperature: 0.8,
+                temperature: 0.7,
                 max_tokens: 120
             })
         });
 
-        const data = await res.json();
+        const text = await res.text();
 
-        if (!data?.choices?.[0]?.message?.content) {
-            console.error("Invalid OpenRouter response:", data);
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (err) {
+            console.error("❌ Invalid JSON from OpenRouter:", text);
             return null;
         }
 
-        return data.choices[0].message.content.trim();
+        if (!res.ok) {
+            console.error("❌ OpenRouter HTTP Error:", data);
+            return null;
+        }
+
+        const reply = data?.choices?.[0]?.message?.content;
+
+        if (!reply) {
+            console.error("❌ Empty AI response:", data);
+            return null;
+        }
+
+        return reply.trim();
 
     } catch (error) {
-        console.error("OpenRouter error:", error.message);
+        console.error("🔥 OpenRouter crash:", error.message);
         return null;
     }
 }
 
 
 /**
- * RANDOM DELAY (human feel)
+ * RANDOM HUMAN DELAY
  */
 function getRandomDelay() {
     return Math.floor(Math.random() * 1500) + 800;

@@ -1,120 +1,117 @@
+const fetch = require("node-fetch");
 require("dotenv").config();
-const OpenAI = require("openai");
 
-// =====================
-// OPENROUTER SETUP
-// =====================
-const client = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
+/**
+ * MAIN CHATBOT RESPONSE HANDLER
+ */
+async function handleChatbotResponse(sock, chatId, message, userMessage, senderId, chatMemory) {
+    try {
+        const response = await getAIResponse(userMessage, {
+            messages: chatMemory.messages.get(senderId) || [],
+            userInfo: chatMemory.userInfo.get(senderId) || {}
+        });
 
-// =====================
-// MEMORY + STATE
-// =====================
-const memory = new Map(); // user chat memory
-const enabledChats = new Set(); // chatbot ON/OFF per group
+        if (!response) {
+            await sock.sendMessage(chatId, { 
+                text: "Hmm, let me think about that... 🤔\nI'm having trouble processing your request right now.",
+                quoted: message
+            });
+            return;
+        }
 
-// =====================
-// AI FUNCTION
-// =====================
-async function askAI(userId, message) {
-  try {
-    if (!memory.has(userId)) {
-      memory.set(userId, []);
+        // human delay
+        await new Promise(resolve => setTimeout(resolve, getRandomDelay()));
+
+        await sock.sendMessage(chatId, {
+            text: response
+        }, {
+            quoted: message
+        });
+
+    } catch (error) {
+        console.error("❌ Error in chatbot response:", error.message);
+
+        if (error.message?.includes("No sessions")) return;
+
+        try {
+            await sock.sendMessage(chatId, {
+                text: "Oops! 😅 I got confused. Try again?",
+                quoted: message
+            });
+        } catch (e) {
+            console.error("Send error:", e.message);
+        }
     }
+}
 
-    const history = memory.get(userId);
 
-    history.push({ role: "user", content: message });
+/**
+ * OPENROUTER AI FUNCTION (REPLACEMENT)
+ */
+async function getAIResponse(userMessage, userContext) {
+    try {
+        const prompt = `
+You are Knight Bot. A natural WhatsApp conversational assistant.
 
-    if (history.length > 10) history.shift();
+RULES:
+- Short replies (1–2 lines)
+- Natural human tone
+- No explanations of rules
+- Be casual and friendly
 
-    const res = await client.chat.completions.create({
-      model: "openai/gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a helpful WhatsApp assistant. Reply short, natural, and friendly."
-        },
-        ...history
-      ]
-    });
+Chat history:
+${userContext.messages.join("\n")}
 
-    const reply = res.choices?.[0]?.message?.content;
+User info:
+${JSON.stringify(userContext.userInfo)}
 
-    if (reply) {
-      history.push({ role: "assistant", content: reply });
+User: ${userMessage}
+Reply naturally:
+        `.trim();
+
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://localhost",
+                "X-Title": "KnightBot"
+            },
+            body: JSON.stringify({
+                model: "meta-llama/llama-3.1-8b-instruct:free",
+                messages: [
+                    { role: "system", content: "You are a helpful WhatsApp chatbot." },
+                    { role: "user", content: prompt }
+                ],
+                temperature: 0.8,
+                max_tokens: 120
+            })
+        });
+
+        const data = await res.json();
+
+        if (!data?.choices?.[0]?.message?.content) {
+            console.error("Invalid OpenRouter response:", data);
+            return null;
+        }
+
+        return data.choices[0].message.content.trim();
+
+    } catch (error) {
+        console.error("OpenRouter error:", error.message);
+        return null;
     }
-
-    return reply || "🤔 I couldn't understand that.";
-  } catch (err) {
-    console.log("OpenRouter Error:", err.message);
-    return "⚠️ AI temporarily unavailable";
-  }
 }
 
-// =====================
-// TOGGLE CHATBOT
-// =====================
-async function handleChatbotCommand(sock, chatId, message, args) {
-  const sender = message.key.participant || message.key.remoteJid;
-  const isOwner = message.key.fromMe;
 
-  if (!args) {
-    return sock.sendMessage(chatId, {
-      text: ".chatbot on/off"
-    }, { quoted: message });
-  }
-
-  if (!isOwner) {
-    return sock.sendMessage(chatId, {
-      text: "❌ Only owner can control chatbot"
-    }, { quoted: message });
-  }
-
-  if (args === "on") {
-    enabledChats.add(chatId);
-    return sock.sendMessage(chatId, {
-      text: "✅ OpenRouter AI Chatbot ENABLED"
-    }, { quoted: message });
-  }
-
-  if (args === "off") {
-    enabledChats.delete(chatId);
-    return sock.sendMessage(chatId, {
-      text: "❌ OpenRouter AI Chatbot DISABLED"
-    }, { quoted: message });
-  }
+/**
+ * RANDOM DELAY (human feel)
+ */
+function getRandomDelay() {
+    return Math.floor(Math.random() * 1500) + 800;
 }
 
-// =====================
-// MAIN AUTO RESPONSE
-// =====================
-async function handleChatbotResponse(sock, chatId, message, text, senderId) {
-  try {
-    if (!enabledChats.has(chatId)) return;
-    if (!text) return;
-
-    // typing indicator
-    await sock.sendPresenceUpdate("composing", chatId);
-
-    const reply = await askAI(senderId, text);
-
-    await sock.sendMessage(chatId, {
-      text: reply
-    }, { quoted: message });
-
-  } catch (err) {
-    console.log("Chatbot Error:", err.message);
-  }
-}
-
-// =====================
-// EXPORTS
-// =====================
 module.exports = {
-  handleChatbotCommand,
-  handleChatbotResponse
+    handleChatbotResponse,
+    getAIResponse
 };
